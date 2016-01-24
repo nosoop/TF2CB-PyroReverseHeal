@@ -12,7 +12,7 @@
 
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.0.1"
+#define PLUGIN_VERSION "0.0.2"
 public Plugin myinfo = {
     name = "[TF2CB] Reverse-Healer Pyro",
     author = "nosoop",
@@ -100,7 +100,6 @@ public void OnEntityCreated(int entity, const char[] classname) {
 
 public void OnClientPutInServer(int client) {
 	SDKHook(client, SDKHook_OnTakeDamageAlive, SDKHook_OnTakeFireDamage);
-	SDKHook(client, SDKHook_PreThink, SDKHook_OnClientPreThink);
 }
 
 public void Event_OnPlayerSpawn(Event event, const char[] name, bool dontBroadcast) {
@@ -121,24 +120,22 @@ public Action SDKHook_OnTakeFireDamage(int victim, int &attacker, int &inflictor
 	return Plugin_Continue;
 }
 
+public void TF2_OnConditionAdded(int client, TFCond condition) {
+	if (condition == TFCond_OnFire) {
+		SetMedigunHealingOnClient(client, false);
+	}
+}
+
 public void TF2_OnConditionRemoved(int client, TFCond condition) {
 	if (condition == TFCond_OnFire) {
 		m_nAfterburnTicksRemaining[client] = 0;
+		SetMedigunHealingOnClient(client, true);
 	}
 }
 
 void OnPlayerIgnited(int client, int weapon = -1) {
 	m_nAfterburnTicksRemaining[client] = NUM_AFTERBURN_DAMAGE_TICKS;
 	m_flAfterburnDamage[client] = GetAfterburnDamage(weapon);
-}
-
-public void SDKHook_OnClientPreThink(int client) {
-	int activeWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
-	
-	// TODO only check on medigun
-	if (IsValidEntity(activeWeapon) && HasEntProp(activeWeapon, Prop_Send, "m_bHealing")) {
-		OnMedigunThink(client, activeWeapon);
-	}
 }
 
 /* Handle heal sources */
@@ -180,98 +177,14 @@ public Action Timer_EnableHealthKit(Handle timer, int healthkit) {
 }
 
 /**
- * Medigun variables
+ * Prevent healing on client, but still allow medigun to target them.
  */
-int m_hHealingTarget[MAXPLAYERS+1];
-int m_hReattachHealingTarget[MAXPLAYERS+1];
-bool m_bHealingTargetBurning[MAXPLAYERS+1];
-
-/**
- * Processed while Medigun is active.
- * 
- * If the healing target changes between burning and not burning,
- * the medigun has its attributes changed so it has a 100% heal rate penalty,
- * and is forced to retarget.
- */
-void OnMedigunThink(int client, int medigun) {
-	if (GetEntProp(medigun, Prop_Send, "m_bHealing")) {
-		int hPreviousHealTarget = m_hHealingTarget[client];
-		m_hHealingTarget[client] = GetEntPropEnt(medigun, Prop_Send, "m_hHealingTarget");
-		
-		int hHealTarget = m_hHealingTarget[client];
-		
-		bool bTargetChanged = hPreviousHealTarget != m_hHealingTarget[client];
-		
-		if (bTargetChanged) {
-			// PrintToChat(client, "healing %N", hHealTarget);
-		}
-		
-		bool bWasHealingTargetBurning = m_bHealingTargetBurning[client];
-		m_bHealingTargetBurning[client] = IsPlayer(hHealTarget) && IsPlayerBurning(hHealTarget);
-		
-		bool bTargetBurnStateChanged = bWasHealingTargetBurning != m_bHealingTargetBurning[client];
-		
-		// Heal target changed state
-		if (bTargetChanged || bTargetBurnStateChanged) {
-			MedigunSetHealingEnabled(medigun, !IsPlayer(hHealTarget) || !IsPlayerBurning(hHealTarget));
-			
-			// Attribute won't apply until the medigun is retargeted...
-			
-			// Player should be retargeted on next frame
-			// TODO retarget during OnThinkPost
-			// there is a bug where a player will disconnect from medibeam but continue healing if ignited while healing
-			SetEntProp(medigun, Prop_Send, "m_bAttacking", false);
-			SetEntProp(medigun, Prop_Send, "m_bHealing", false);
-			SetEntPropEnt(medigun, Prop_Send, "m_hHealingTarget", -1);
-			
-			ReattachMedigunOnNextFrame(client, medigun, hHealTarget);
-		}
-		
-		// TODO reduce afterburn time based on damage
-		// TODO bugfix where players ignited while healing continue to heal
+void SetMedigunHealingOnClient(int client, bool bEnabled) {
+	if (bEnabled) {
+		TF2Attrib_RemoveByName(client, "health from healers reduced");
 	} else {
-		m_hHealingTarget[client] = -1;
-		m_hReattachHealingTarget[client] = -1;
-		m_bHealingTargetBurning[client] = false;
-		
-		MedigunSetHealingEnabled(medigun, true);
+		TF2Attrib_SetByName(client, "health from healers reduced", 0.0);
 	}
-}
-
-void MedigunSetHealingEnabled(int medigun, bool bEnable) {
-	if (bEnable) {
-		TF2Attrib_RemoveByName(medigun, "heal rate penalty");
-	} else {
-		TF2Attrib_SetByName(medigun, "heal rate penalty", 0.0);
-	}
-}
-
-void ReattachMedigunOnNextFrame(int client, int medigun, int healtarget) {
-	DataPack data = new DataPack();
-	data.WriteCell(client);
-	data.WriteCell(medigun);
-	data.WriteCell(healtarget);
-	
-	RequestFrame(RequestFrame_ReattachMedigun, data);
-}
-
-public void RequestFrame_ReattachMedigun(DataPack data) {
-	data.Reset();
-	
-	int client = data.ReadCell();
-	int medigun = data.ReadCell();
-	int healtarget = data.ReadCell();
-	ReattachMedigun(client, medigun, healtarget);
-	
-	delete data;
-}
-
-void ReattachMedigun(int client, int medigun, int healtarget) {
-	SetEntProp(medigun, Prop_Send, "m_bAttacking", true);
-	SetEntProp(medigun, Prop_Send, "m_bHealing", true);
-	SetEntPropEnt(medigun, Prop_Send, "m_hHealingTarget", healtarget);
-	
-	m_hReattachHealingTarget[client] = -1;
 }
 
 /* Utility functions */
