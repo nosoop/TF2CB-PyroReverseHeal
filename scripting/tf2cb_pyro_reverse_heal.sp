@@ -12,7 +12,7 @@
 
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.1.0"
+#define PLUGIN_VERSION "0.1.1"
 public Plugin myinfo = {
     name = "[TF2CB] Reverse-Healer Pyro",
     author = "nosoop",
@@ -173,10 +173,15 @@ public Action OnHealthKitTouch(int healthkit, int player) {
 	if (IsPlayer(player) && IsPlayerBurning(player)) {
 		TF2_ExtinguishPlayer(player);
 		
-		AcceptEntityInput(healthkit, "Disable");
-		
-		// default health kit spawn time?
-		CreateTimer(10.0, Timer_EnableHealthKit, healthkit, TIMER_FLAG_NO_MAPCHANGE);
+		if ( GetEntPropEnt(healthkit, Prop_Data, "m_hOwnerEntity") != -1 ) {
+			// Don't let it respawn if owned by valid entity (e.g., player's Sandvich)
+			// We can't check bAutoMaterialize, as Sandviches also have that as `true`
+			AcceptEntityInput(healthkit, "Kill");
+		} else {
+			// Owner is -1.  Assume it's a map healthkit; disable and respawn.
+			AcceptEntityInput(healthkit, "Disable");	
+			CreateTimer(10.0, Timer_EnableHealthKit, healthkit, TIMER_FLAG_NO_MAPCHANGE);
+		}
 		
 		return Plugin_Handled;
 	}
