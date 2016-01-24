@@ -12,7 +12,7 @@
 
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.0.0"
+#define PLUGIN_VERSION "0.0.1"
 public Plugin myinfo = {
     name = "[TF2CB] Reverse-Healer Pyro",
     author = "nosoop",
@@ -58,17 +58,18 @@ public Action AdminCmd_IgniteMe(int client, int argc) {
 	// World ignites for testing
 	TF2_IgnitePlayer(client, client);
 	
-	// igniteplayer input does not fire onignited output, so we'll do that ourselves
+	// igniteplayer input does not fire onignited output, so we'll do that for ourselves
 	OnPlayerIgnited(client);
 	
 	return Plugin_Handled;
 }
 
 public Action AdminCmd_IgniteFriendlies(int client, int argc) {
+	// medigun testing
 	TFTeam clientTeam = TF2_GetClientTeam(client);
 	for (int i = MaxClients; i > 0; --i) {
 		if (IsClientInGame(i) && TF2_GetClientTeam(i) == clientTeam && i != client) {
-			TF2_IgnitePlayer(i, client);
+			TF2_IgnitePlayer(i, i);
 		}
 	}
 	return Plugin_Handled;
@@ -170,6 +171,7 @@ public Action OnHealthKitTouch(int healthkit, int player) {
  * Handles custom health kit respawning when picked up by a burning player.
  */
 public Action Timer_EnableHealthKit(Handle timer, int healthkit) {
+	// TODO validate classname
 	if (IsValidEntity(healthkit)) {
 		AcceptEntityInput(healthkit, "Enable");
 		EmitGameSoundToAll("Item.Materialize", healthkit);
@@ -181,6 +183,7 @@ public Action Timer_EnableHealthKit(Handle timer, int healthkit) {
  * Medigun variables
  */
 int m_hHealingTarget[MAXPLAYERS+1];
+int m_hReattachHealingTarget[MAXPLAYERS+1];
 bool m_bHealingTargetBurning[MAXPLAYERS+1];
 
 /**
@@ -204,18 +207,13 @@ void OnMedigunThink(int client, int medigun) {
 		}
 		
 		bool bWasHealingTargetBurning = m_bHealingTargetBurning[client];
-		m_bHealingTargetBurning[client] = IsPlayerBurning(hHealTarget);
+		m_bHealingTargetBurning[client] = IsPlayer(hHealTarget) && IsPlayerBurning(hHealTarget);
 		
 		bool bTargetBurnStateChanged = bWasHealingTargetBurning != m_bHealingTargetBurning[client];
 		
 		// Heal target changed state
 		if (bTargetChanged || bTargetBurnStateChanged) {
-			if (IsPlayerBurning(hHealTarget)) {
-				// Player is burning -- apply heal rate penalty
-				TF2Attrib_SetByName(medigun, "heal rate penalty", 0.0);
-			} else {
-				TF2Attrib_RemoveByName(medigun, "heal rate penalty");
-			}
+			MedigunSetHealingEnabled(medigun, !IsPlayer(hHealTarget) || !IsPlayerBurning(hHealTarget));
 			
 			// Attribute won't apply until the medigun is retargeted...
 			
@@ -225,16 +223,55 @@ void OnMedigunThink(int client, int medigun) {
 			SetEntProp(medigun, Prop_Send, "m_bAttacking", false);
 			SetEntProp(medigun, Prop_Send, "m_bHealing", false);
 			SetEntPropEnt(medigun, Prop_Send, "m_hHealingTarget", -1);
+			
+			ReattachMedigunOnNextFrame(client, medigun, hHealTarget);
 		}
 		
 		// TODO reduce afterburn time based on damage
 		// TODO bugfix where players ignited while healing continue to heal
 	} else {
 		m_hHealingTarget[client] = -1;
+		m_hReattachHealingTarget[client] = -1;
 		m_bHealingTargetBurning[client] = false;
 		
-		TF2Attrib_RemoveByName(medigun, "heal rate penalty");
+		MedigunSetHealingEnabled(medigun, true);
 	}
+}
+
+void MedigunSetHealingEnabled(int medigun, bool bEnable) {
+	if (bEnable) {
+		TF2Attrib_RemoveByName(medigun, "heal rate penalty");
+	} else {
+		TF2Attrib_SetByName(medigun, "heal rate penalty", 0.0);
+	}
+}
+
+void ReattachMedigunOnNextFrame(int client, int medigun, int healtarget) {
+	DataPack data = new DataPack();
+	data.WriteCell(client);
+	data.WriteCell(medigun);
+	data.WriteCell(healtarget);
+	
+	RequestFrame(RequestFrame_ReattachMedigun, data);
+}
+
+public void RequestFrame_ReattachMedigun(DataPack data) {
+	data.Reset();
+	
+	int client = data.ReadCell();
+	int medigun = data.ReadCell();
+	int healtarget = data.ReadCell();
+	ReattachMedigun(client, medigun, healtarget);
+	
+	delete data;
+}
+
+void ReattachMedigun(int client, int medigun, int healtarget) {
+	SetEntProp(medigun, Prop_Send, "m_bAttacking", true);
+	SetEntProp(medigun, Prop_Send, "m_bHealing", true);
+	SetEntPropEnt(medigun, Prop_Send, "m_hHealingTarget", healtarget);
+	
+	m_hReattachHealingTarget[client] = -1;
 }
 
 /* Utility functions */
@@ -248,10 +285,10 @@ bool IsPlayerBurning(int player) {
 }
 
 float GetAfterburnDamage(int weapon = -1) {
-	// on a scale of 1 to buried how slow is this
 	float flAfterburnFactor = 1.0;
 	
 	if (IsValidEntity(weapon)) {
+		// on a scale of 1 to slug how slow is it to read through tf2attribs every time
 		// degreaser burn penalty is determined by static attribute
 		int attribList[16];
 		float valueList[16];
