@@ -52,8 +52,13 @@ float m_flAfterburnDamage[MAXPLAYERS+1];
 public void OnPluginStart() {
 	HookEvent("player_spawn", Event_OnPlayerSpawn);
 	
-	RegAdminCmd("sm_igniteme", AdminCmd_IgniteMe, ADMFLAG_ROOT, "Ignites the user.");
-	RegAdminCmd("sm_ignitefriendlies", AdminCmd_IgniteFriendlies, ADMFLAG_ROOT, "Ignites the user's teammates.");
+	CreateConVar("tf2cb_reverse_heal_pyro_version", PLUGIN_VERSION,
+			"Current version of Reverse-Healer Pyro", FCVAR_NOTIFY | FCVAR_DONTRECORD);
+	
+	RegAdminCmd("sm_igniteme", AdminCmd_IgniteMe, ADMFLAG_ROOT,
+			"Testing command.  Ignites the user.");
+	RegAdminCmd("sm_ignitefriendlies", AdminCmd_IgniteFriendlies, ADMFLAG_ROOT,
+			"Testing command.  Ignites the user's teammates.");
 	
 	for (int i = MaxClients; i > 0; --i) {
 		if (IsClientInGame(i)) {
@@ -154,6 +159,9 @@ public void TF2_OnConditionRemoved(int client, TFCond condition) {
 
 void OnPlayerIgnited(int client, int weapon = -1) {
 	m_nAfterburnTicksRemaining[client] = NUM_AFTERBURN_DAMAGE_TICKS;
+	
+	// TODO if player is burned by two sources, do we just calculate afterburn dmg/tick based
+	// on most recent damage source?
 	m_flAfterburnDamage[client] = GetAfterburnDamage(weapon);
 }
 
