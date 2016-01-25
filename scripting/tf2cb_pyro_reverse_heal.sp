@@ -12,7 +12,7 @@
 
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.1.1"
+#define PLUGIN_VERSION "0.2.0"
 public Plugin myinfo = {
     name = "[TF2CB] Reverse-Healer Pyro",
     author = "nosoop",
@@ -33,7 +33,10 @@ public Plugin myinfo = {
 /**
  * Attribute defindex for "weapon burn damage reduced" (afterburn damage modifier)
  */
-#define DEFINDEX_WEAPON_BURN_DMG_REDUCED 72
+#define ATTR_DEFINDEX_WEAPON_BURN_DMG_INCREASED 71
+#define ATTR_DEFINDEX_WEAPON_BURN_DMG_REDUCED 72
+#define ATTR_DEFINDEX_WEAPON_BURN_TIME_INCREASED 73
+#define ATTR_DEFINDEX_WEAPON_BURN_TIME_REDUCED 74
 
 // Damage bits from Advanced Weaponiser
 // see: https://forums.alliedmods.net/showpost.php?p=2258564&postcount=7
@@ -158,10 +161,9 @@ public void TF2_OnConditionRemoved(int client, TFCond condition) {
 }
 
 void OnPlayerIgnited(int client, int weapon = -1) {
-	m_nAfterburnTicksRemaining[client] = NUM_AFTERBURN_DAMAGE_TICKS;
-	
 	// TODO if player is burned by two sources, do we just calculate afterburn dmg/tick based
 	// on most recent damage source?
+	m_nAfterburnTicksRemaining[client] = GetAfterburnTickDuration(weapon);
 	m_flAfterburnDamage[client] = GetAfterburnDamage(weapon);
 }
 
@@ -316,28 +318,73 @@ void TF2_ExtinguishPlayer(int player) {
  * assumed to be AFTERBURN_DAMAGE (3.0, hardcoded).
  */
 float GetAfterburnDamage(int weapon = -1) {
-	float flAfterburnFactor = 1.0;
+	float flAfterburnDamageFactor = 1.0;
 	
 	if (IsValidEntity(weapon)) {
-		// on a scale of 1 to slug how slow is it to read through tf2attribs every time
 		// degreaser burn penalty is determined by static attribute
-		int attribList[16];
-		float valueList[16];
+		int attrs[] = {
+			ATTR_DEFINDEX_WEAPON_BURN_DMG_INCREASED,
+			ATTR_DEFINDEX_WEAPON_BURN_DMG_REDUCED
+		};
 		
-		int iDefIndex = GetEntProp(weapon, Prop_Send, "m_iItemDefinitionIndex");
-		int nStaticAttrs = TF2Attrib_GetStaticAttribs(iDefIndex, attribList, valueList);
-		
-		for (int i = 0; i < nStaticAttrs; i++) {
-			switch (attribList[i]) {
-				case DEFINDEX_WEAPON_BURN_DMG_REDUCED: {
-					flAfterburnFactor = valueList[i];
-				}
-			}
-		}
-		
-		// TODO also check other attribs in case of other plugin mods
+		GetAttributeValue(weapon, attrs, sizeof(attrs), flAfterburnDamageFactor);
 	}
 	
 	// TODO is default afterburn hardcoded?
-	return AFTERBURN_DAMAGE * flAfterburnFactor;
+	return AFTERBURN_DAMAGE * flAfterburnDamageFactor;
+}
+
+/**
+ * Returns the afterburn duration in fire damage ticks.
+ */
+int GetAfterburnTickDuration(int weapon = -1) {
+	float flAfterburnDurationFactor = 1.0;
+	
+	if (IsValidEntity(weapon)) {
+		int attrs[] = {
+			ATTR_DEFINDEX_WEAPON_BURN_TIME_INCREASED,
+			ATTR_DEFINDEX_WEAPON_BURN_TIME_REDUCED
+		};
+		
+		GetAttributeValue(weapon, attrs, sizeof(attrs), flAfterburnDurationFactor);
+	}
+	
+	return RoundFloat(flAfterburnDurationFactor * NUM_AFTERBURN_DAMAGE_TICKS);
+}
+
+/**
+ * Returns the value of an attribute given a list of attributes that share the same class.
+ */
+bool GetAttributeValue(int entity, int[] attrs, int nAttrs, float &flAttributeValue) {
+	// on a scale of 1 to slug how slow is it to read through tf2attribs every time
+	bool bFoundValue;
+	
+	int attrList[16];
+	float valueList[16];
+	
+	int iDefIndex = GetEntProp(entity, Prop_Send, "m_iItemDefinitionIndex");
+	int nStaticAttrs = TF2Attrib_GetStaticAttribs(iDefIndex, attrList, valueList);
+	
+	// Check static attributes
+	for (int i = 0; i < nStaticAttrs; i++) {
+		for (int a = 0; a < nAttrs; a++) {
+			if (attrList[i] == attrs[a]) {
+				flAttributeValue = valueList[i];
+				bFoundValue = true;
+			}
+		}
+	}
+	
+	// Also check attributes on entity itself (prioritize its values if existing)
+	Address pAttrib;
+	for (int a = 0; a < nAttrs; a++) {
+		pAttrib = TF2Attrib_GetByDefIndex(entity, attrs[a]);
+		
+		if (pAttrib != Address_Null) {
+			flAttributeValue = TF2Attrib_GetValue(pAttrib);
+			bFoundValue = true;
+		}
+	}
+	
+	return bFoundValue;
 }
