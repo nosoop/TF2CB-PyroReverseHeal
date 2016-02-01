@@ -12,7 +12,7 @@
 
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.2.0"
+#define PLUGIN_VERSION "0.3.0"
 public Plugin myinfo = {
     name = "[TF2CB] Reverse-Healer Pyro",
     author = "nosoop",
@@ -52,11 +52,17 @@ int m_nAfterburnTicksRemaining[MAXPLAYERS+1];
 // amount of afterburn damage / tick the player is taking
 float m_flAfterburnDamage[MAXPLAYERS+1];
 
+ConVar g_ConVarPreventAfterburnOnHeal;
+
 public void OnPluginStart() {
 	HookEvent("player_spawn", Event_OnPlayerSpawn);
 	
 	CreateConVar("tf2cb_reverse_heal_pyro_version", PLUGIN_VERSION,
 			"Current version of Reverse-Healer Pyro", FCVAR_NOTIFY | FCVAR_DONTRECORD);
+	
+	g_ConVarPreventAfterburnOnHeal = CreateConVar("sm_rhp_prevent_afterburn_on_heal", "0",
+			"Prevent afterburn damage if the player is being healed",
+			_, true, 0.0, true, 1.0);
 	
 	RegAdminCmd("sm_igniteme", AdminCmd_IgniteMe, ADMFLAG_ROOT,
 			"Testing command.  Ignites the user.");
@@ -70,6 +76,8 @@ public void OnPluginStart() {
 	}
 	
 	HookExistingHealthKits();
+	
+	AutoExecConfig();
 }
 
 public Action AdminCmd_IgniteMe(int client, int argc) {
@@ -138,6 +146,11 @@ public Action SDKHook_OnTakeFireDamage(int victim, int &attacker, int &inflictor
 	if (damagetype & TF_DMG_AFTERBURN && m_nAfterburnTicksRemaining[victim] > 0) {
 		// for now we pretend the client wasn't still burning if less than 0
 		m_nAfterburnTicksRemaining[victim]--;
+		
+		if (g_ConVarPreventAfterburnOnHeal.BoolValue && TF2_IsPlayerInCondition(victim, TFCond_Healing)) {
+			damage = 0.0;
+			return Plugin_Changed;
+		}
 	}
 	return Plugin_Continue;
 }
